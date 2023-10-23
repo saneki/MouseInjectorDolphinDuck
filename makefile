@@ -17,12 +17,12 @@ OBJDIR = $(SRCDIR)obj/
 EXENAME = "$(SRCDIR)Mouse Injector.exe"
 
 #Compiler flags
-CFLAGS = -ansi -O2 -m64 -std=c99 -Wall
+CFLAGS = -ansi -O2 -m64 -std=c99 -Wall "-I$(SRCDIR)windows-exports-iter/include"
 WFLAGS = -Wextra -pedantic -Wno-parentheses
 RESFLAGS = -F pe-x86-64 --input-format=rc -O coff
 
 #Linker flags
-OBJS = $(OBJDIR)main.o $(OBJDIR)memory.o $(OBJDIR)mouse.o $(OBJDIR)manymouse.o $(OBJDIR)windows_wminput.o $(OBJDIR)icon.res
+OBJS = $(OBJDIR)main.o $(OBJDIR)exports.o $(OBJDIR)memory.o $(OBJDIR)mouse.o $(OBJDIR)manymouse.o $(OBJDIR)windows_wminput.o $(OBJDIR)icon.res
 GAMEOBJS = $(patsubst $(GAMESDIR)%.c, $(OBJDIR)%.o, $(wildcard $(GAMESDIR)*.c))
 LIBS = -static-libgcc -lpsapi -lwinmm
 LFLAGS = $(OBJS) $(GAMEOBJS) -o $(EXENAME) $(LIBS) -m64 -s
@@ -36,6 +36,9 @@ all: clean mouseinjector
 #Individual recipes
 $(OBJDIR)main.o: $(SRCDIR)main.c $(SRCDIR)main.h $(SRCDIR)memory.h $(SRCDIR)mouse.h $(GAMESDIR)game.h
 	$(CC) -c $(SRCDIR)main.c -o $(OBJDIR)main.o $(CFLAGS) $(WFLAGS)
+
+$(OBJDIR)exports.o: $(SRCDIR)windows-exports-iter/src/exports.c $(SRCDIR)windows-exports-iter/include/windows-exports-iter/exports.h
+	$(CC) -c $(SRCDIR)windows-exports-iter/src/exports.c -o $(OBJDIR)exports.o $(CFLAGS) $(WFLAGS)
 
 $(OBJDIR)memory.o: $(SRCDIR)memory.c $(SRCDIR)memory.h
 	$(CC) -c $(SRCDIR)memory.c -o $(OBJDIR)memory.o $(CFLAGS) $(WFLAGS)
@@ -53,7 +56,7 @@ $(OBJDIR)icon.res: $(SRCDIR)icon.rc $(SRCDIR)icon.ico
 	$(WINDRES) -i $(SRCDIR)icon.rc -o $(OBJDIR)icon.res $(RESFLAGS)
 
 #Game drivers recipe
-$(OBJDIR)%.o: $(GAMESDIR)%.c $(SRCDIR)main.h $(SRCDIR)memory.h $(SRCDIR)mouse.h $(GAMESDIR)game.h
+$(OBJDIR)%.o: $(GAMESDIR)%.c $(SRCDIR)main.h $(SRCDIR)windows-exports-iter/include/windows-exports-iter/exports.h $(SRCDIR)memory.h $(SRCDIR)mouse.h $(GAMESDIR)game.h
 	$(CC) -c $< -o $@ $(CFLAGS) $(WFLAGS)
 
 clean:

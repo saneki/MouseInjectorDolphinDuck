@@ -24,6 +24,7 @@
 #include <psapi.h>
 #include "main.h"
 #include "memory.h"
+#include "windows-exports-iter/exports.h"
 
 static uint64_t emuoffset = 0;
 static uint32_t aramoffset = 0x02000000; // REQUIRES that MMU is off
@@ -264,6 +265,87 @@ void MEM_Quit(void)
 	if(emuhandle != NULL)
 		CloseHandle(emuhandle);
 }
+
+static BOOL ReadProcU32(HANDLE hProcess, LPCVOID lpBaseAddress, DWORD *value) {
+	return ReadProcessMemory(hProcess, lpBaseAddress, (LPVOID)value, sizeof(*value), NULL);
+}
+
+static BOOL ReadProcU64(HANDLE hProcess, LPCVOID lpBaseAddress, uint64_t *value) {
+	return ReadProcessMemory(hProcess, lpBaseAddress, (LPVOID)value, sizeof(*value), NULL);
+}
+
+BOOL GetRootModuleInfo(HANDLE hProcess, MODULEINFO *module_info) {
+	HMODULE modules[1];
+	DWORD cbNeeded;
+	if (EnumProcessModules(hProcess, modules, sizeof(modules), &cbNeeded) == 0) {
+		fprintf(stderr, "Unable to enumerate process modules.\n");
+		return FALSE;
+	}
+	if (GetModuleInformation(hProcess, modules[0], module_info, sizeof(*module_info)) == 0) {
+		fprintf(stderr, "Unable to get module information.\n");
+		return FALSE;
+	}
+	return TRUE;
+}
+
+static void* FindDuckstationMemExport(HANDLE hProcess) {
+	int ret;
+
+	MODULEINFO module_info;
+	if (!GetRootModuleInfo(hProcess, &module_info)) {
+		fprintf(stderr, "Unable to get module information.\n");
+		return NULL;
+	}
+
+	ExportsProcCtxt ctxt;
+	WORD pe_type = 0;
+	if ((ret = EXPORTS_Proc_GetExportRVA(hProcess, &module_info, &ctxt, &pe_type)) != 0) {
+		fprintf(stderr, "ERROR: %s\n", EXPORTS_GetErrString(ret));
+		return NULL;
+	}
+
+	if (pe_type != NT_MAGIC_64) {
+		fprintf(stderr, "Unsupported PE type value: %04x\n", pe_type);
+		return NULL;
+	}
+
+	// Resolve RAM pointer address.
+	void **ram = NULL;
+	if ((ret = EXPORTS_Proc_ResolveExportByName(hProcess, &module_info, &ctxt, "RAM", (void**)&ram)) != 0) {
+		fprintf(stderr, "ERROR: %s\n", EXPORTS_GetErrString(ret));
+		return NULL;
+	}
+
+	void* ram_address;
+	if (!ReadProcU64(hProcess, (LPCVOID)ram, (uint64_t*)&ram_address)) {
+		fprintf(stderr, "ERROR: Unable to read RAM address from memory: %p\n", (void*)ram);
+		return NULL;
+	}
+	if (ram_address == NULL) {
+		fprintf(stderr, "RAM address is NULL\n");
+		return NULL;
+	}
+
+	// Check RAM_SIZE export for expected value.
+	DWORD *ram_size_ptr = NULL;
+	if ((ret = EXPORTS_Proc_ResolveExportByName(hProcess, &module_info, &ctxt, "RAM_SIZE", (void**)&ram_size_ptr)) != 0) {
+		fprintf(stderr, "ERROR: %s\n", EXPORTS_GetErrString(ret));
+		return NULL;
+	}
+
+	DWORD ram_size;
+	if (!ReadProcU32(hProcess, (LPCVOID)ram_size_ptr, &ram_size)) {
+		fprintf(stderr, "ERROR: Unable to read RAM size value from memory: %p\n", (void*)ram_size_ptr);
+		return NULL;
+	}
+	if (ram_size != 0x200000) {
+		fprintf(stderr, "Unknown RAM_SIZE value: 0x%08lx\n", ram_size);
+		return NULL;
+	}
+
+	return ram_address;
+}
+
 //==========================================================================
 // Purpose: update emuoffset pointer to location of gamecube memory
 // Changed Globals: emuoffset
@@ -278,6 +360,15 @@ uint8_t MEM_FindRamOffset(void)
 
 	uint32_t lastRegionSize = 0;
 	uint32_t lastlastRegionSize = 0;
+
+	// Handle modern DuckStation.
+	if (isPS1handle == 1) {
+		void *game_ram = FindDuckstationMemExport(emuhandle);
+		if (game_ram != NULL) {
+			emuoffset = (uint64_t)game_ram;
+			return 1;
+		}
+	}
 
 	while (VirtualQueryEx(emuhandle, gamecube_ptr, &info, sizeof(info))) // loop continues until we reach the last possible memory region
 	{

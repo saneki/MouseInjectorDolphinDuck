@@ -1,0 +1,3 @@
+[submodule "windows-exports-iter"]
+	path = windows-exports-iter
+	url = https://gitlab.com/saneki/windows-exports-iter
